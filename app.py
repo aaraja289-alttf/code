@@ -51,7 +51,7 @@ ORDER BY
 
 # Fetch data directly from Supabase (ttl=0 ensures it doesn't cache and always fetches fresh data)
 df_totals = conn.query(query_totals, ttl=0)
-df_hourly = conn.query(hourly_query, ttl=0)
+df_hourly = conn.query(query_hourly, ttl=0)
 
 # ----------------------------------------------------
 # DASHBOARD UI
