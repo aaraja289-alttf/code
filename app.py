@@ -106,51 +106,110 @@ with col2:
 st.markdown("---")
 
 # ----------------------------------------------------
-# 🕵️‍♂️ CMD-STYLE AUDIT TRAIL (Hour-by-Hour in UK Time)
+# 🕵️‍♂️ BOTH AUDIT TRAILS (Side-by-Side)
 # ----------------------------------------------------
-st.subheader("📝 Hour-by-Hour Audit Trail (UK Time)")
+col_audit1, col_audit2 = st.columns(2)
 
-if not df_hourly.empty:
-    # Get a list of the unique hours that have data for the day
-    hour_list = sorted(df_hourly['hour_of_day'].unique().astype(int).tolist())
-    
-    selected_hour = st.selectbox(
-        "Select an hour to view detailed logs:", 
-        hour_list,
-        format_func=lambda x: f"{x:02d}:00 - {x:02d}:59 (UK Time)"
-    )
-    
-    # Query forcing the output and hour extraction to strictly use UK Time
-    query_audit = f"""
-    SELECT 
-        employee_name,
-        links_converted,
-        TO_CHAR(created_at AT TIME ZONE 'Europe/London', 'YYYY-MM-DD') AS audit_date,
-        TO_CHAR(created_at AT TIME ZONE 'Europe/London', 'HH24:MI:SS') AS audit_time
-    FROM 
-        deal_logs
-    WHERE 
-        (CASE 
-            WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
-            ELSE created_at AT TIME ZONE 'Europe/London'
-        END)::date = '{target_date_str}'
-        AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'Europe/London') = {selected_hour}
-    ORDER BY 
-        created_at ASC;
-    """
-    
-    df_audit = conn.query(query_audit, ttl=0)
-    
-    if not df_audit.empty:
-        audit_text = f"--- Activity Log for {selected_hour:02d}:00 to {selected_hour:02d}:59 (UK Time) ---\n\n"
-        for index, row in df_audit.iterrows():
-            audit_text += f"[{row['audit_time']}] {row['employee_name']} converted {row['links_converted']} deals\n"
+# --- 1. EMPLOYEE AUDIT TRAIL (Restored) ---
+with col_audit1:
+    st.subheader("📝 Employee Audit Trail")
+
+    if not df_totals.empty:
+        employee_list = df_totals['employee_name'].tolist()
+        selected_employee = st.selectbox("Select an employee to view their log:", employee_list)
         
-        st.code(audit_text, language="bash")
+        query_audit = f"""
+        SELECT 
+            employee_name,
+            links_converted,
+            TO_CHAR(
+                CASE 
+                    WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
+                    ELSE created_at AT TIME ZONE 'Europe/London'
+                END, 'YYYY-MM-DD'
+            ) AS audit_date,
+            TO_CHAR(
+                CASE 
+                    WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
+                    ELSE created_at AT TIME ZONE 'Europe/London'
+                END, 'HH12:MI:SS AM'
+            ) AS audit_time
+        FROM 
+            deal_logs
+        WHERE 
+            (CASE 
+                WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
+                ELSE created_at AT TIME ZONE 'Europe/London'
+            END)::date = '{target_date_str}'
+            AND employee_name = '{selected_employee}'
+        ORDER BY 
+            created_at ASC;
+        """
+        
+        df_audit = conn.query(query_audit, ttl=0)
+        
+        if not df_audit.empty:
+            audit_text = ""
+            for index, row in df_audit.iterrows():
+                audit_text += f"{row['employee_name']} converted {row['links_converted']} deals on {row['audit_date']} at {row['audit_time']}\n"
+            
+            st.code(audit_text, language="bash")
+        else:
+            st.write("No audit logs found for this employee.")
     else:
-        st.write("No audit logs found for this specific hour.")
-else:
-    st.write("Awaiting data to generate audit trails.")
+        st.write("Awaiting data to generate audit trails.")
+
+
+# --- 2. HOUR-BY-HOUR AUDIT TRAIL (Easier Formatting) ---
+with col_audit2:
+    st.subheader("⏰ Hour-by-Hour Audit Trail")
+
+    if not df_hourly.empty:
+        hour_list = sorted(df_hourly['hour_of_day'].unique().astype(int).tolist())
+        
+        # Helper function to turn "21" into "09:00 PM to 10:00 PM"
+        def format_hour_simple(h):
+            start_time = datetime.strptime(str(h), "%H").strftime("%I:00 %p")
+            end_h = 0 if h == 23 else h + 1
+            end_time = datetime.strptime(str(end_h), "%H").strftime("%I:00 %p")
+            return f"{start_time} to {end_time} (UK Time)"
+
+        selected_hour = st.selectbox(
+            "Select working hour:", 
+            hour_list,
+            format_func=format_hour_simple
+        )
+        
+        # Extract logs explicitly using UK Time
+        query_hour_audit = f"""
+        SELECT 
+            employee_name,
+            links_converted,
+            TO_CHAR(created_at AT TIME ZONE 'Europe/London', 'HH12:MI:SS AM') AS audit_time
+        FROM 
+            deal_logs
+        WHERE 
+            (CASE 
+                WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
+                ELSE created_at AT TIME ZONE 'Europe/London'
+            END)::date = '{target_date_str}'
+            AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'Europe/London') = {selected_hour}
+        ORDER BY 
+            created_at ASC;
+        """
+        
+        df_hour_audit = conn.query(query_hour_audit, ttl=0)
+        
+        if not df_hour_audit.empty:
+            hr_audit_text = f"--- Logs for {format_hour_simple(selected_hour)} ---\n\n"
+            for index, row in df_hour_audit.iterrows():
+                hr_audit_text += f"[{row['audit_time']}] {row['employee_name']} converted {row['links_converted']} deals\n"
+            
+            st.code(hr_audit_text, language="bash")
+        else:
+            st.write("No audit logs found for this specific hour.")
+    else:
+        st.write("Awaiting data to generate audit trails.")
 
 # Footer timestamp
 st.sidebar.markdown("---")
