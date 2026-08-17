@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import time
 from datetime import datetime, timedelta
 import pytz
 
@@ -25,8 +24,6 @@ selected_date = st.sidebar.date_input(
     value=current_date,
     min_value=current_date - timedelta(days=30)
 )
-
-refresh_rate = st.sidebar.slider("Auto-Refresh Interval (Seconds)", min_value=10, max_value=300, value=60)
 
 # ----------------------------------------------------
 # 📊 SQL QUERIES (Dynamic Timezone Logic)
@@ -109,30 +106,27 @@ with col2:
 st.markdown("---")
 
 # ----------------------------------------------------
-# 🕵️‍♂️ CMD-STYLE AUDIT TRAIL
+# 🕵️‍♂️ CMD-STYLE AUDIT TRAIL (Hour-by-Hour in UK Time)
 # ----------------------------------------------------
-st.subheader("📝 Employee Audit Trail")
+st.subheader("📝 Hour-by-Hour Audit Trail (UK Time)")
 
-if not df_totals.empty:
-    employee_list = df_totals['employee_name'].tolist()
-    selected_employee = st.selectbox("Select an employee to view their detailed log:", employee_list)
+if not df_hourly.empty:
+    # Get a list of the unique hours that have data for the day
+    hour_list = sorted(df_hourly['hour_of_day'].unique().astype(int).tolist())
     
+    selected_hour = st.selectbox(
+        "Select an hour to view detailed logs:", 
+        hour_list,
+        format_func=lambda x: f"{x:02d}:00 - {x:02d}:59 (UK Time)"
+    )
+    
+    # Query forcing the output and hour extraction to strictly use UK Time
     query_audit = f"""
     SELECT 
         employee_name,
         links_converted,
-        TO_CHAR(
-            CASE 
-                WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
-                ELSE created_at AT TIME ZONE 'Europe/London'
-            END, 'YYYY-MM-DD'
-        ) AS audit_date,
-        TO_CHAR(
-            CASE 
-                WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
-                ELSE created_at AT TIME ZONE 'Europe/London'
-            END, 'HH24:MI:SS'
-        ) AS audit_time
+        TO_CHAR(created_at AT TIME ZONE 'Europe/London', 'YYYY-MM-DD') AS audit_date,
+        TO_CHAR(created_at AT TIME ZONE 'Europe/London', 'HH24:MI:SS') AS audit_time
     FROM 
         deal_logs
     WHERE 
@@ -140,7 +134,7 @@ if not df_totals.empty:
             WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
             ELSE created_at AT TIME ZONE 'Europe/London'
         END)::date = '{target_date_str}'
-        AND employee_name = '{selected_employee}'
+        AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'Europe/London') = {selected_hour}
     ORDER BY 
         created_at ASC;
     """
@@ -148,20 +142,16 @@ if not df_totals.empty:
     df_audit = conn.query(query_audit, ttl=0)
     
     if not df_audit.empty:
-        audit_text = ""
+        audit_text = f"--- Activity Log for {selected_hour:02d}:00 to {selected_hour:02d}:59 (UK Time) ---\n\n"
         for index, row in df_audit.iterrows():
-            audit_text += f"{row['employee_name']} converted {row['links_converted']} deals on {row['audit_date']} at {row['audit_time']}\n"
+            audit_text += f"[{row['audit_time']}] {row['employee_name']} converted {row['links_converted']} deals\n"
         
         st.code(audit_text, language="bash")
     else:
-        st.write("No audit logs found for this employee on this date.")
+        st.write("No audit logs found for this specific hour.")
 else:
     st.write("Awaiting data to generate audit trails.")
 
 # Footer timestamp
 st.sidebar.markdown("---")
 st.sidebar.text(f"Last updated: {datetime.now(uk_tz).strftime('%I:%M:%S %p UK Time')}")
-
-# Auto-refresh
-time.sleep(refresh_rate)
-st.rerun()
