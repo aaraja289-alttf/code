@@ -258,6 +258,80 @@ if not df_full_day.empty:
 else:
     st.info("No data available to download for this date.")
 
+# ----------------------------------------------------
+# 🏷️ EMPLOYEE TAG & DUPLICATE ASIN ANALYSIS
+# ----------------------------------------------------
+st.markdown("---")
+st.header("🏷️ Employee Tag & Duplicate ASIN Analysis")
+
+if not df_totals.empty:
+    emp_list_for_tags = df_totals['employee_name'].tolist()
+    selected_emp_tag = st.selectbox("Select Employee for Tag/Duplicate Analysis:", emp_list_for_tags, key="tag_analysis_emp")
+    
+    table_name = f"deals_{selected_emp_tag.lower()}"
+    
+    query_tags = f"""
+    SELECT 
+        tracking_id AS "Tracking ID",
+        SUM(deal_count) AS "Total Deals"
+    FROM 
+        {table_name}
+    WHERE 
+        (CASE 
+            WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
+            ELSE created_at AT TIME ZONE 'Europe/London'
+        END)::date = '{target_date_str}'
+        AND tracking_id != 'mr-d-21'
+    GROUP BY 
+        tracking_id
+    ORDER BY 
+        "Total Deals" DESC;
+    """
+    
+    query_dupes = f"""
+    SELECT 
+        asin AS "ASIN",
+        MAX(product_title) AS "Product Title",
+        SUM(deal_count) AS "Times Posted"
+    FROM 
+        {table_name}
+    WHERE 
+        (CASE 
+            WHEN created_at < '2026-07-23 00:00:00+00' THEN created_at AT TIME ZONE 'Asia/Karachi'
+            ELSE created_at AT TIME ZONE 'Europe/London'
+        END)::date = '{target_date_str}'
+        AND tracking_id != 'mr-d-21'
+    GROUP BY 
+        asin
+    HAVING 
+        SUM(deal_count) > 1
+    ORDER BY 
+        "Times Posted" DESC;
+    """
+    
+    try:
+        df_tags = conn.query(query_tags, ttl=0)
+        df_dupes = conn.query(query_dupes, ttl=0)
+        
+        col_tag, col_dupe = st.columns(2)
+        
+        with col_tag:
+            st.subheader(f"📊 {selected_emp_tag}'s Tag Breakdown")
+            if not df_tags.empty:
+                st.dataframe(df_tags, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"No tag data found for {selected_emp_tag} today.")
+                
+        with col_dupe:
+            st.subheader(f"⚠️ Duplicate ASINs ({selected_emp_tag})")
+            if not df_dupes.empty:
+                st.dataframe(df_dupes, use_container_width=True, hide_index=True)
+            else:
+                st.success("No duplicate deals posted today! Great job.")
+                
+    except Exception as e:
+        st.error(f"Could not load data for {selected_emp_tag}. Error: {e}")
+
 # Footer timestamp
 st.sidebar.markdown("---")
 st.sidebar.text(f"Last updated: {datetime.now(uk_tz).strftime('%I:%M:%S %p UK Time')}")
